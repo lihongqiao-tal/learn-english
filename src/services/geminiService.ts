@@ -17,7 +17,7 @@ export const generateTopicQuestions = async (keyword: string): Promise<string[]>
     }
   });
   try {
-    return JSON.parse(response.text);
+    return JSON.parse(response.text || '[]');
   } catch (e) {
     return ["What do you think about this topic?", "Can you tell me more about your experience?", "Why is this important to you?"];
   }
@@ -55,7 +55,7 @@ export const optimizeAndExtract = async (transcription: string): Promise<{ optim
     }
   });
 
-  const result = JSON.parse(response.text);
+  const result = JSON.parse(response.text || '{}');
   const formattedChunks: Chunk[] = result.chunks.map((c: any) => ({
     ...c,
     id: Math.random().toString(36).substring(7),
@@ -86,7 +86,7 @@ export const autoCompleteChunk = async (partial: { original?: string; translatio
       }
     }
   });
-  return JSON.parse(response.text);
+  return JSON.parse(response.text || '{}');
 };
 
 export const evaluateSentence = async (chunk: string, userSentence: string): Promise<{ natural: boolean; feedback: string; nextProficiency?: Proficiency }> => {
@@ -108,7 +108,7 @@ export const evaluateSentence = async (chunk: string, userSentence: string): Pro
       }
     }
   });
-  const data = JSON.parse(response.text);
+  const data = JSON.parse(response.text || '{}');
   return {
     natural: data.natural,
     feedback: data.feedback,

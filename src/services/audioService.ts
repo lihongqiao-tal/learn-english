@@ -29,7 +29,7 @@ export class TranscriptionService {
   private currentTranscription = '';
 
   constructor(onTranscription: (text: string, isFinal: boolean) => void) {
-    this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    this.ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_API_KEY });
     this.onTranscription = onTranscription;
   }
 

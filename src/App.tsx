@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Home, Mic, Library, BookOpen, Search, Settings, Plus, RotateCcw, CheckCircle2, XCircle } from 'lucide-react';
+import { Home, Mic, Library, BookOpen, Search, Plus, RotateCcw, CheckCircle2, XCircle } from 'lucide-react';
 import { Chunk, Proficiency, SpeakingSession } from './types';
 import { generateTopicQuestions, optimizeAndExtract, evaluateSentence, autoCompleteChunk } from './services/geminiService';
 import { TranscriptionService } from './services/audioService';
@@ -44,6 +44,7 @@ const App: React.FC = () => {
     setIsLoading(true);
     const q = await generateTopicQuestions(keyword);
     setQuestions(q);
+  
     setIsLoading(false);
   };
 
@@ -102,9 +103,6 @@ const App: React.FC = () => {
         <NavButton active={activeTab === 'library'} onClick={() => setActiveTab('library')} icon={<Library size={24} />} label="Library" />
         <NavButton active={activeTab === 'review'} onClick={() => setActiveTab('review')} icon={<BookOpen size={24} />} label="Review" />
         
-        <div className="mt-auto hidden md:block">
-          <NavButton active={false} onClick={() => {}} icon={<Settings size={24} />} label="Settings" />
-        </div>
       </nav>
 
       {/* Main Content Area */}

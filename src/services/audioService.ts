@@ -1,81 +1,76 @@
-
-import { GoogleGenAI, Modality, Blob, LiveServerMessage } from '@google/genai';
-
-function encode(bytes: Uint8Array) {
-  let binary = '';
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
-
-function createBlob(data: Float32Array): Blob {
-  const l = data.length;
-  const int16 = new Int16Array(l);
-  for (let i = 0; i < l; i++) {
-    int16[i] = data[i] * 32768;
-  }
-  return {
-    data: encode(new Uint8Array(int16.buffer)),
-    mimeType: 'audio/pcm;rate=16000',
-  };
-}
-
+// 使用 OpenAI Whisper 风格的批量音频转录
 export class TranscriptionService {
-  private ai: any;
-  private sessionPromise: Promise<any> | null = null;
+  private mediaRecorder: MediaRecorder | null = null;
+  private audioChunks: Blob[] = [];
   private onTranscription: (text: string, isFinal: boolean) => void;
-  private currentTranscription = '';
+  private stream: MediaStream | null = null;
 
   constructor(onTranscription: (text: string, isFinal: boolean) => void) {
-    this.ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_API_KEY });
     this.onTranscription = onTranscription;
   }
 
   async start() {
-    this.currentTranscription = '';
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-    const source = inputAudioContext.createMediaStreamSource(stream);
-    const scriptProcessor = inputAudioContext.createScriptProcessor(4096, 1, 1);
-
-    this.sessionPromise = this.ai.live.connect({
-      model: 'gemini-2.5-flash-native-audio-preview-09-2025',
-      callbacks: {
-        onopen: () => {
-          scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
-            const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
-            const pcmBlob = createBlob(inputData);
-            this.sessionPromise?.then((session) => {
-              session.sendRealtimeInput({ media: pcmBlob });
-            });
-          };
-          source.connect(scriptProcessor);
-          scriptProcessor.connect(inputAudioContext.destination);
-        },
-        onmessage: async (message: LiveServerMessage) => {
-          if (message.serverContent?.inputTranscription) {
-            const text = message.serverContent.inputTranscription.text;
-            this.currentTranscription += text;
-            this.onTranscription(this.currentTranscription, false);
-          }
-          if (message.serverContent?.turnComplete) {
-            this.onTranscription(this.currentTranscription, true);
-          }
-        },
-        onerror: (e: any) => console.error('Live API Error:', e),
-        onclose: () => console.log('Live API Closed'),
-      },
-      config: {
-        responseModalities: [Modality.AUDIO],
-        inputAudioTranscription: {},
-      },
+    this.audioChunks = [];
+    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    
+    // 使用 webm 格式录音
+    this.mediaRecorder = new MediaRecorder(this.stream, {
+      mimeType: 'audio/webm',
     });
+
+    this.mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        this.audioChunks.push(event.data);
+      }
+    };
+
+    this.mediaRecorder.onstop = async () => {
+      const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
+      await this.transcribeAudio(audioBlob);
+    };
+
+    this.mediaRecorder.start();
+    console.log('Recording started...');
   }
 
   async stop() {
-    this.sessionPromise?.then(session => session.close());
-    this.sessionPromise = null;
+    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+      this.mediaRecorder.stop();
+      console.log('Recording stopped, transcribing...');
+    }
+    
+    if (this.stream) {
+      this.stream.getTracks().forEach(track => track.stop());
+      this.stream = null;
+    }
+  }
+
+  private async transcribeAudio(audioBlob: Blob) {
+    try {
+      const formData = new FormData();
+      formData.append('file', audioBlob, 'audio.webm');
+      formData.append('model', 'whisper-1'); // 根据你的服务调整模型名称
+
+      const response = await fetch('/api/openai-compatible/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+          'api-key': `${import.meta.env.VITE_TAL_MLOPS_APP_ID}:${import.meta.env.VITE_TAL_MLOPS_APP_KEY}`,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Transcription failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const text = data.text || '';
+      
+      // 调用回调，标记为最终结果
+      this.onTranscription(text, true);
+    } catch (error) {
+      console.error('Transcription error:', error);
+      this.onTranscription('转录失败，请重试', true);
+    }
   }
 }

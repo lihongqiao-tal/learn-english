@@ -14,6 +14,9 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/api/, ''),
       }
     }
+  },
+  optimizeDeps: {
+    exclude: ['@google/genai'], // 不再需要 Google GenAI SDK
   }
 })
 

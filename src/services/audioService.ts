@@ -1,120 +1,123 @@
-// 使用 OpenAI Whisper 风格的批量音频转录
+// 使用浏览器自带的 Web Speech API 进行实时语音识别
 export class TranscriptionService {
-  private mediaRecorder: MediaRecorder | null = null;
-  private audioChunks: Blob[] = [];
+  private recognition: any = null;
   private onTranscription: (text: string, isFinal: boolean) => void;
-  private stream: MediaStream | null = null;
+  private finalTranscript: string = "";
+  private interimTranscript: string = "";
 
   constructor(onTranscription: (text: string, isFinal: boolean) => void) {
     this.onTranscription = onTranscription;
+    this.initRecognition();
+  }
+
+  private initRecognition() {
+    // 检查浏览器是否支持 Web Speech API
+    const SpeechRecognition =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      console.error("浏览器不支持语音识别，请使用 Chrome 或 Edge 浏览器");
+      return;
+    }
+
+    this.recognition = new SpeechRecognition();
+
+    // 配置语音识别
+    this.recognition.lang = "en-US"; // 识别英语
+    this.recognition.continuous = true; // 持续识别
+    this.recognition.interimResults = true; // 显示临时结果
+    this.recognition.maxAlternatives = 1;
+
+    // 监听识别结果
+    this.recognition.onresult = (event: any) => {
+      this.interimTranscript = "";
+
+      // 遍历所有识别结果
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+
+        if (event.results[i].isFinal) {
+          // 最终结果
+          this.finalTranscript += transcript + " ";
+        } else {
+          // 临时结果
+          this.interimTranscript += transcript;
+        }
+      }
+
+      // 发送当前识别的文本（最终结果 + 临时结果）
+      const currentText = (
+        this.finalTranscript + this.interimTranscript
+      ).trim();
+      this.onTranscription(currentText, false);
+    };
+
+    // 识别结束事件
+    this.recognition.onend = () => {
+      console.log("识别结束");
+      // 发送最终结果
+      if (this.finalTranscript.trim()) {
+        this.onTranscription(this.finalTranscript.trim(), true);
+      }
+    };
+
+    // 错误处理
+    this.recognition.onerror = (event: any) => {
+      console.error("语音识别错误:", event.error);
+
+      let errorMessage = "识别失败，请重试";
+      switch (event.error) {
+        case "no-speech":
+          errorMessage = "未检测到语音，请重试";
+          break;
+        case "audio-capture":
+          errorMessage = "无法访问麦克风";
+          break;
+        case "not-allowed":
+          errorMessage = "请允许使用麦克风权限";
+          break;
+        case "network":
+          errorMessage = "网络错误，请检查网络连接";
+          break;
+      }
+
+      this.onTranscription(errorMessage, true);
+    };
+
+    this.recognition.onstart = () => {
+      console.log("语音识别已启动...");
+    };
   }
 
   async start() {
-    this.audioChunks = [];
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (!this.recognition) {
+      this.onTranscription("浏览器不支持语音识别，请使用 Chrome 或 Edge", true);
+      return;
+    }
 
-    // 使用 webm 格式录音
-    this.mediaRecorder = new MediaRecorder(this.stream, {
-      mimeType: "audio/webm",
-    });
+    try {
+      // 重置转录文本
+      this.finalTranscript = "";
+      this.interimTranscript = "";
 
-    this.mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        this.audioChunks.push(event.data);
-      }
-    };
-
-    this.mediaRecorder.onstop = async () => {
-      const audioBlob = new Blob(this.audioChunks, { type: "audio/webm" });
-      await this.transcribeAudio(audioBlob);
-    };
-
-    this.mediaRecorder.start();
-    console.log("Recording started...");
+      // 开始识别
+      this.recognition.start();
+      console.log("开始录音和识别...");
+    } catch (error) {
+      console.error("启动识别失败:", error);
+      this.onTranscription("启动失败，请重试", true);
+    }
   }
 
   async stop() {
-    if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
-      this.mediaRecorder.stop();
-      console.log("Recording stopped, transcribing...");
-    }
-
-    if (this.stream) {
-      this.stream.getTracks().forEach((track) => track.stop());
-      this.stream = null;
-    }
-  }
-
-  private async blobToBase64(blob: Blob): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64String = reader.result as string;
-        // 移除 data:audio/webm;base64, 前缀
-        const base64Data = base64String.split(",")[1];
-        resolve(base64Data);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  }
-
-  private async transcribeAudio(audioBlob: Blob) {
-    try {
-      // 将音频转换为base64
-      const base64Audio = await this.blobToBase64(audioBlob);
-
-      const response = await fetch(
-        "/api/openai-compatible/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "api-key": `${import.meta.env.VITE_TAL_MLOPS_APP_ID}:${
-              import.meta.env.VITE_TAL_MLOPS_APP_KEY
-            }`,
-          },
-          body: JSON.stringify({
-            model: "gemini-3-flash",
-            messages: [
-              {
-                role: "user",
-                content: [
-                  {
-                    type: "text",
-                    text: "Please transcribe this audio file. Return only the transcribed text without any additional explanation.",
-                  },
-                  {
-                    type: "input_audio",
-                    input_audio: {
-                      data: base64Audio,
-                      format: "webm",
-                    },
-                  },
-                ],
-              },
-            ],
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("Transcription error response:", errorText);
-        throw new Error(`Transcription failed: ${response.status}`);
+    if (this.recognition) {
+      try {
+        this.recognition.stop();
+        console.log("停止识别...");
+      } catch (error) {
+        console.error("停止识别失败:", error);
       }
-
-      const data = await response.json();
-      console.log("Transcription response:", data);
-
-      // 提取文本结果
-      const text = data.choices?.[0]?.message?.content || data.text || "";
-
-      // 调用回调，标记为最终结果
-      this.onTranscription(text, true);
-    } catch (error) {
-      console.error("Transcription error:", error);
-      this.onTranscription("转录失败，请重试", true);
     }
   }
 }
